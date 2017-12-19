@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 '''
 check_solr.py - v0.2 -  Chris Ganderton <github@thefraggle.com>
+check_solr.py - v0.3 -  Borja Rubio <https://github.com/smaug1985>
+https://stackoverflow.com/questions/1875052/using-client-certificates-with-urllib2
 
 Nagios check script for checking replication issues and ping status on solr slaves.
 
@@ -17,22 +19,45 @@ OPTIONS:
 -w : delta between master and local replication version, to warn on (default 1)
 -c : delta between master and local replication version, to crit on (defualt 2)
 -i : ignore a core, use multiple times to ignore multiple cores.
+-s : use https instead of http
+-a : Path to .pem certificate
+-k : Path to private key of certificate
 
 EXAMPLE: ./check_solr_rep.py -H localhost -p 8093 -W solr -r -w 10 -c 20
+EXAMPLE: ./check_solr_rep.py -H localhost -p 8093 -W solr -r -w 10 -c 20 -s -a /path/cert.pem -k /path/key.pem
 
 '''
-import urllib, json, sys
+import urllib2, json, sys, urllib,httplib
 from optparse import OptionParser
 
+''' 
+Added for support client certificates
+'''
+
+class HTTPSClientAuthHandler(urllib2.HTTPSHandler):
+    def __init__(self, key, cert):
+        urllib2.HTTPSHandler.__init__(self)
+        self.key = key
+        self.cert = cert
+
+    def https_open(self, req):
+        # Rather than pass in a reference to a connection class, we pass in
+        # a reference to a function which, for all intents and purposes,
+        # will behave as a constructor
+        return self.do_open(self.getConnection, req)
+
+    def getConnection(self, host, timeout=300):
+        return httplib.HTTPSConnection(host, key_file=self.key, cert_file=self.cert)
+
 def listcores():
+
     status_cmd  = baseurl + core_admin_url + urllib.urlencode({'action':'status','wt':'json'})
     cores       = set()
-
-    res         = urllib.urlopen(status_cmd)
+    opener      = urllib2.build_opener(HTTPSClientAuthHandler(cert_key, cert) )
+    res         = opener.open(status_cmd)
     data        = json.loads(res.read())
 
     core_data   = data['status']
-
     for core_name in core_data:
         cores.add(core_name)
 
@@ -40,16 +65,16 @@ def listcores():
 
 def version(core):
     ver_cmd     = rep_cmd     = baseurl + core + '/admin/system?' + urllib.urlencode({'wt':'json'})
-
-    rres        = urllib.urlopen(ver_cmd)
+    opener      = urllib2.build_opener(HTTPSClientAuthHandler(cert_key, cert) )
+    rres        = opener.open(ver_cmd)
     rdata       = json.loads(rres.read())
     version_number     = rdata['lucene']['solr-spec-version'].split()[0]
     return version_number
 
 def repstatus(core):
     rep_cmd     = baseurl + core + '/replication?' + urllib.urlencode({'command':'details','wt':'json'})
-
-    rres        = urllib.urlopen(rep_cmd)
+    opener      = urllib2.build_opener(HTTPSClientAuthHandler(cert_key, cert) )
+    rres        = opener.open(rep_cmd)
     rdata       = json.loads(rres.read())
 
     localgeneration  = rdata['details'].get('generation')
@@ -76,8 +101,8 @@ def repstatus(core):
 
 def solrping(core):
     ping_cmd = baseurl + core + '/admin/ping?' + urllib.urlencode({'wt':'json'})
-
-    res = urllib.urlopen(ping_cmd)
+    opener      = urllib2.build_opener(HTTPSClientAuthHandler(cert_key, cert) )
+    res = opener.open(ping_cmd)
     jsondata = res.read();
 
     if jsondata == False:
@@ -92,7 +117,7 @@ def solrping(core):
     return status
 
 def main():
-    global baseurl, core_admin_url, threshold_warn, threshold_crit
+    global baseurl, core_admin_url, threshold_warn, threshold_crit,cert_key,cert
 
     cmd_parser = OptionParser(version="%prog 0.1")
     cmd_parser.add_option("-H", "--host", type="string", action="store", dest="solr_server", default="localhost", help="SOLR Server address")
@@ -104,6 +129,11 @@ def main():
     cmd_parser.add_option("-c", "--critical", type="int", action="store", dest="threshold_crit", help="CRIT threshold for replication check", default=2)
     cmd_parser.add_option("-C", "--core", type="string", action="append", dest="cores_override", help="SOLR Cores to check (autodetection used when this is omitted)", default=[])
     cmd_parser.add_option("-i", "--ignore", type="string", action="append", dest="ignore_cores", help="SOLR Cores to ignore", default=[])
+    cmd_parser.add_option("-k", "--cert-key", type="string", action="store", dest="cert_key", help="Path to private key of certificate", default=[])
+    cmd_parser.add_option("-a", "--cert", type="string", action="store", dest="cert", help="Path to authentication certificate certificate", default=[])
+    cmd_parser.add_option("-s", "--secure",  action="store_true", dest="secure", help="Use https instead of http", default=[])
+    
+    
 
     (cmd_options, cmd_args) = cmd_parser.parse_args()
 
@@ -132,15 +162,23 @@ def main():
     threshold_crit      = cmd_options.threshold_crit
     cores_override      = set(cmd_options.cores_override)
     ignore_cores        = set(cmd_options.ignore_cores)
+    cert_key            = cmd_options.cert_key
+    cert                = cmd_options.cert
+    is_secure           = cmd_options.secure
 
     core_admin_url      = 'admin/cores?'
-    baseurl             = 'http://' + solr_server + ':' + solr_server_port + '/' +  solr_server_webapp + '/'
+
+    if is_secure:
+        protocol = "https://"
+    else:
+        protocol = "http://"
+    baseurl             = protocol + solr_server + ':' + solr_server_port + '/' +  solr_server_webapp + '/'
 
     repwarn             = set()
     repcrit             = set()
 
     pingerrors          = set()
-
+    
     if cores_override:
         all_cores = cores_override
     else:
@@ -197,4 +235,3 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
-
