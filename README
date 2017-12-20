@@ -4,6 +4,10 @@ This plugin is in it's early stages, so improvements are welcome, it assumes you
 running a multicore setup, and will iterate through all of them getting the ping status
 if you use -P and/or the replication status if you're checking a slave and pass -r on
 the command line.
+*****************
+New version for add support to use client certificate for authentication & support for https protocol
+
+More info: https://stackoverflow.com/questions/1875052/using-client-certificates-with-urllib2
 
 *****************
 
@@ -17,7 +21,11 @@ OPTIONS:
 -w : delta between master and local replication version, to warn on (default 1)
 -c : delta between master and local replication version, to crit on (defualt 2)
 -i : ignore a core, use multiple times to ignore multiple cores.
+-s : use https instead of http
+-a : Path to .pem certificate
+-k : Path to private key of certificate
 
 EXAMPLE: ./check_solr_rep.py -H localhost -p 8093 -W solr -r -w 10 -c 20
+EXAMPLE: ./check_solr_rep.py -H localhost -p 8093 -W solr -r -w 10 -c 20 -s -a /path/cert.pem -k /path/key.pem
 
 *****************
